@@ -24,6 +24,10 @@ app = Flask(__name__)
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 TOOL_SECRET       = os.environ.get("TOOL_SECRET", "")
+GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_OWNER      = os.environ.get("GITHUB_OWNER", "nathangbingle")
+GITHUB_REPO       = os.environ.get("GITHUB_REPO", "nbp-school-proposals")
+GITHUB_BRANCH     = os.environ.get("GITHUB_BRANCH", "main")
 
 DEFAULT_ORIGINS = [
     "https://nathangbingle.github.io",
@@ -84,8 +88,9 @@ def health():
     return jsonify({
         "service": "nbp-ai-proxy",
         "status": "ok",
-        "has_api_key": bool(ANTHROPIC_API_KEY),
+        "has_api_key": bool(ANTHROPIC_API_KEY) and not ANTHROPIC_API_KEY.startswith("REPLACE"),
         "has_secret": bool(TOOL_SECRET),
+        "has_github_token": bool(GITHUB_TOKEN),
     })
 
 
@@ -178,6 +183,87 @@ def research():
         }, 502)
 
     return reply({"ok": True, "research": parsed})
+
+
+@app.route("/publish", methods=["OPTIONS"])
+def publish_options():
+    origin = request.headers.get("Origin", "")
+    resp = make_response("", 204)
+    for k, v in cors_headers(origin).items():
+        resp.headers[k] = v
+    return resp
+
+
+@app.route("/publish", methods=["POST"])
+def publish():
+    """Push an HTML file into the nbp-school-proposals repo."""
+    origin = request.headers.get("Origin", "")
+    cors = cors_headers(origin)
+
+    def reply(payload, status=200):
+        resp = make_response(jsonify(payload), status)
+        for k, v in cors.items():
+            resp.headers[k] = v
+        return resp
+
+    if TOOL_SECRET and request.headers.get("X-NBP-Key", "") != TOOL_SECRET:
+        return reply({"error": "Unauthorized"}, 401)
+
+    if not GITHUB_TOKEN:
+        return reply({"error": "GITHUB_TOKEN not set on backend"}, 500)
+
+    data = request.get_json(silent=True) or {}
+    filename = (data.get("filename") or "").strip()
+    html_content = data.get("html", "")
+
+    # Validate filename: allow only slug-like names ending in .html
+    if not filename or not re.match(r"^[a-z0-9][a-z0-9-]{0,80}\.html$", filename):
+        return reply({"error": "Invalid filename. Must be a slug ending in .html"}, 400)
+    if not html_content or len(html_content) > 500_000:
+        return reply({"error": "html required (1 byte - 500 KB)"}, 400)
+
+    import base64
+    encoded = base64.b64encode(html_content.encode("utf-8")).decode("ascii")
+    api = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{filename}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+
+    # Check if file exists (need sha to overwrite)
+    existing_sha = None
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            head = client.get(f"{api}?ref={GITHUB_BRANCH}", headers=headers)
+            if head.status_code == 200:
+                existing_sha = head.json().get("sha")
+    except httpx.RequestError:
+        pass
+
+    payload = {
+        "message": f"{'Update' if existing_sha else 'Add'} proposal: {filename}",
+        "content": encoded,
+        "branch": GITHUB_BRANCH,
+    }
+    if existing_sha:
+        payload["sha"] = existing_sha
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            put = client.put(api, headers=headers, json=payload)
+    except httpx.RequestError as e:
+        return reply({"error": f"GitHub request failed: {e}"}, 502)
+
+    if put.status_code not in (200, 201):
+        err = put.json() if put.text else {}
+        return reply({"error": err.get("message", f"GitHub returned {put.status_code}")}, 502)
+
+    pages_url = f"https://{GITHUB_OWNER}.github.io/{GITHUB_REPO}/{filename}"
+    return reply({
+        "ok": True,
+        "url": pages_url,
+        "updated": bool(existing_sha),
+    })
 
 
 if __name__ == "__main__":
