@@ -41,33 +41,55 @@ DEFAULT_ORIGINS = [
 _extra = os.environ.get("ALLOWED_ORIGINS", "")
 ALLOWED_ORIGINS = set(DEFAULT_ORIGINS + [o.strip() for o in _extra.split(",") if o.strip()])
 
-SYSTEM_PROMPT = """You are researching a US school to fill in a photography proposal. Given a school name, use web search to find the school's official information and return a single JSON object with these exact fields:
+SYSTEM_PROMPT = """You are researching a US school to fill in a photography proposal. Given a school name, use web search to find the school's official information and return a single JSON object.
+
+REQUIRED SEARCHES — perform these in order:
+
+1. School identity: search for the school's full name to confirm name, location, grade range, mascot, type (public/private/charter).
+
+2. Brand colors: visit the school's MAIN OFFICIAL WEBSITE (typically a .org, .k12, .net, .edu domain — e.g. "schoolname.k12.state.us" or "schoolname.org"). Look at the homepage header, footer, primary nav background, hero banner, and primary buttons to identify the two dominant brand colors. DO NOT use athletics pages, booster pages, or social media for color extraction — they often use brighter or different palettes than the school's official identity. Report the actual hex codes used in the site's CSS or visible in screenshots of the official homepage.
+
+3. Staff contacts: search for "[School Name] principal" and "[School Name] staff directory" and "[School Name] contact" to find:
+   - Principal: name + email
+   - Assistant Principal(s): name + email (if multiple, return the first)
+   - Yearbook coordinator / advisor: name + email (often a teacher; sometimes called yearbook sponsor)
+   - Secretary or front office / main office: name + email (may just be a generic info@ address)
+   Many schools list staff emails on their site. If no specific email is published, leave the email empty — DO NOT invent or guess email addresses.
+
+Return EXACTLY this JSON shape:
 
 {
   "schoolName": "Full official name",
-  "schoolShort": "Short version used colloquially (e.g. 'Banks Trail' for 'Banks Trail Middle School')",
-  "mascot": "Mascot name (e.g. 'Bobcats', 'Patriots', or empty string if unknown)",
-  "cityState": "City, ST (e.g. 'Fort Mill, SC')",
-  "governingState": "Full state name (e.g. 'South Carolina')",
-  "gradeRange": "Grade levels (e.g. 'K-5', '6-8', '9-12', 'K-12')",
+  "schoolShort": "Short colloquial version under 20 chars (e.g. 'Banks Trail' for 'Banks Trail Middle School')",
+  "mascot": "Mascot name only (e.g. 'Bobcats', 'Patriots') or empty string",
+  "cityState": "City, ST",
+  "governingState": "Full state name",
+  "gradeRange": "e.g. 'K-5', '6-8', '9-12', 'K-12'",
   "schoolType": "One of: public elementary school, public middle school, public high school, public K-12 school, private school, private K-8 school, classical public charter school, public charter school, virtual public school",
-  "hasSeniors": true if 12th grade is served, false otherwise,
-  "primaryColor": "Hex like #1E3A8A, based on school's official colors if findable",
-  "accentColor": "Hex like #D4A54C, the secondary/accent color",
-  "colorsConfidence": "high | medium | low",
+  "hasSeniors": true if 12th grade,
+  "officialWebsite": "URL of the school's main official website (the one you used for color extraction)",
+  "primaryColor": "Hex code from the school's main website header/nav, e.g. '#1E3A8A'",
+  "accentColor": "Hex code of the secondary brand color from the same site",
+  "colorsConfidence": "high if pulled directly from the school's official .org/.k12 site, medium if inferred from school district or strong indirect signals, low if defaulted/unknown",
+  "colorSource": "Short note on where colors came from, e.g. 'banks-trail.k12.sc.us homepage header' or 'unknown'",
   "isCharter": true if charter,
-  "governedBy": "Charter authorizing body if applicable, empty string otherwise",
-  "managedBy": "Management organization if applicable, empty string otherwise",
-  "notes": "One short sentence of anything noteworthy for proposal context"
+  "governedBy": "Charter authorizing body or empty",
+  "managedBy": "Management organization or empty",
+  "contacts": [
+    {"role": "Principal",            "name": "...", "email": "..."},
+    {"role": "Assistant Principal",  "name": "...", "email": "..."},
+    {"role": "Yearbook Coordinator", "name": "...", "email": "..."},
+    {"role": "Secretary",            "name": "...", "email": "..."}
+  ],
+  "notes": "One short sentence of context for the proposal (e.g. 'New school opening fall 2026; expanding to add 6th grade next year.')"
 }
 
 Rules:
 - Return ONLY the JSON object, no commentary, no markdown fences
-- Use empty string "" for fields you cannot confidently determine
-- For hasSeniors: infer from gradeRange
-- For colors: only provide hex codes if you find them stated on the school's official site. Otherwise return empty strings and colorsConfidence: "low"
-- Prefer the darker, more saturated color as primaryColor and lighter/brighter as accentColor
-- Keep schoolShort under 20 characters
+- Always return all four contact roles in the contacts array; use empty strings for fields you can't find
+- NEVER invent or guess emails — if you can't find a real published email, leave it empty
+- Colors must be valid 6-digit hex (#RRGGBB)
+- Prefer darker/more saturated as primaryColor, lighter/brighter as accentColor
 """
 
 
@@ -139,8 +161,8 @@ def research():
                 },
                 json={
                     "model": "claude-haiku-4-5",
-                    "max_tokens": 1500,
-                    "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
+                    "max_tokens": 3500,
+                    "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 10}],
                     "system": SYSTEM_PROMPT,
                     "messages": [{
                         "role": "user",
