@@ -47,7 +47,7 @@ REQUIRED SEARCHES — perform these in order:
 
 1. School identity: search for the school's full name to confirm name, location, grade range, mascot, type (public/private/charter).
 
-2. Brand colors: visit the school's MAIN OFFICIAL WEBSITE (typically a .org, .k12, .net, .edu domain — e.g. "schoolname.k12.state.us" or "schoolname.org"). Look at the homepage header, footer, primary nav background, hero banner, and primary buttons to identify the two dominant brand colors. DO NOT use athletics pages, booster pages, or social media for color extraction — they often use brighter or different palettes than the school's official identity. Report the actual hex codes used in the site's CSS or visible in screenshots of the official homepage.
+2. Brand colors: search for the school's STATED colors in text. Try queries like "[School Name] school colors", "[School Name] colors mascot", "[School Name] About". Schools usually state their colors in their About page, history page, handbook, or Wikipedia entry (e.g. "Our school colors are navy and gold"). Also check the school's main website (.org, .k12, .net, .edu) for any text that names the colors. Convert color names into hex codes (e.g. "navy" → "#1E3A8A", "gold" → "#D4A54C", "kelly green" → "#4CBB17", "maroon" → "#800000", "Carolina blue" → "#7BAFD4"). Return the hex codes you would use to represent those named colors faithfully. DO NOT use a school district's colors as a fallback for a specific school — find that specific school's own colors. If you genuinely cannot find the school's stated colors after multiple searches, return empty strings and colorsConfidence: "low".
 
 3. Staff contacts: search for "[School Name] principal" and "[School Name] staff directory" and "[School Name] contact" to find:
    - Principal: name + email
@@ -68,10 +68,10 @@ Return EXACTLY this JSON shape:
   "schoolType": "One of: public elementary school, public middle school, public high school, public K-12 school, private school, private K-8 school, classical public charter school, public charter school, virtual public school",
   "hasSeniors": true if 12th grade,
   "officialWebsite": "URL of the school's main official website (the one you used for color extraction)",
-  "primaryColor": "Hex code from the school's main website header/nav, e.g. '#1E3A8A'",
-  "accentColor": "Hex code of the secondary brand color from the same site",
-  "colorsConfidence": "high if pulled directly from the school's official .org/.k12 site, medium if inferred from school district or strong indirect signals, low if defaulted/unknown",
-  "colorSource": "Short note on where colors came from, e.g. 'banks-trail.k12.sc.us homepage header' or 'unknown'",
+  "primaryColor": "Hex code for the school's primary color (darker/dominant), e.g. '#1E3A8A'. Convert color names to hex.",
+  "accentColor": "Hex code for the school's secondary/accent color (lighter/brighter), e.g. '#D4A54C'",
+  "colorsConfidence": "high if the school's website or About page explicitly states the colors, medium if a reliable third-party source (Wikipedia, news article) names them, low if defaulted/unknown",
+  "colorSource": "Short note: where you found the colors stated, e.g. 'About page on banks-trail.k12.sc.us' or 'Wikipedia entry'",
   "isCharter": true if charter,
   "governedBy": "Charter authorizing body or empty",
   "managedBy": "Management organization or empty",
