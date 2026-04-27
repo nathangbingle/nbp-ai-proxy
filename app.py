@@ -17,6 +17,7 @@ Endpoints:
 import os
 import json
 import re
+import base64
 from flask import Flask, request, jsonify, make_response
 import httpx
 
@@ -56,6 +57,16 @@ REQUIRED SEARCHES — perform these in order:
    - Secretary or front office / main office: name + email (may just be a generic info@ address)
    Many schools list staff emails on their site. If no specific email is published, leave the email empty — DO NOT invent or guess email addresses.
 
+4. School logo: visit the school's official website homepage and find the SCHOOL-SPECIFIC logo image. This is usually in the page header (top of the page), often inside an <img> tag, sometimes inside a logo container. PRIORITIZE the school's own crest/mascot logo (e.g. a Coyote head, an Eagle, a school monogram) over a district-wide shield. If the page only shows a district logo (e.g. "Fort Mill Schools" or "CMS"), still return that — but flag it in logoNote.
+
+   Return the FULL absolute URL to the logo image (e.g. https://www.example.k12.sc.us/cms/lib/images/logo.png). PNG and SVG are preferred; JPG is acceptable. AVOID returning:
+   - Tiny favicons (32x32 favicon.ico)
+   - Generic stock icons or social media share images
+   - Decorative banner photos that aren't actually the logo
+   - URLs that 404 or require login
+
+   If you cannot confidently find a usable logo URL, return empty string and set logoConfidence: "low".
+
 Return EXACTLY this JSON shape:
 
 {
@@ -75,6 +86,9 @@ Return EXACTLY this JSON shape:
   "isCharter": true if charter,
   "governedBy": "Charter authorizing body or empty",
   "managedBy": "Management organization or empty",
+  "logoUrl": "Full absolute URL to the school's logo image, or empty string if not found",
+  "logoConfidence": "high if found a clear school-specific logo on the official site, medium if only a district shield is available, low if not found or unsure",
+  "logoNote": "Short note about logo source/type, e.g. 'Coyote mascot logo from school homepage header' or 'District shield only — no school-specific logo found'",
   "contacts": [
     {"role": "Principal",            "name": "...", "email": "..."},
     {"role": "Assistant Principal",  "name": "...", "email": "..."},
@@ -244,7 +258,6 @@ def publish():
     if not html_content or len(html_content) > 500_000:
         return reply({"error": "html required (1 byte - 500 KB)"}, 400)
 
-    import base64
     encoded = base64.b64encode(html_content.encode("utf-8")).decode("ascii")
     api = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{filename}"
     headers = {
@@ -285,6 +298,87 @@ def publish():
         "ok": True,
         "url": pages_url,
         "updated": bool(existing_sha),
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logo resolver — fetches a logo URL server-side, returns base64 data URL.
+# Why this exists:
+#   - Bypasses browser CORS restrictions on cross-origin school websites
+#   - Embeds the image into the published HTML so it stays alive even if
+#     the school redesigns their site and the original URL 404s later
+#   - Validates that the URL actually resolves to a usable image
+# ─────────────────────────────────────────────────────────────────────────────
+ALLOWED_IMAGE_MIMES = {
+    "image/png", "image/jpeg", "image/jpg", "image/gif",
+    "image/svg+xml", "image/webp",
+}
+MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2 MB cap
+
+
+@app.route("/logo-resolve", methods=["OPTIONS"])
+def logo_resolve_options():
+    origin = request.headers.get("Origin", "")
+    resp = make_response("", 204)
+    for k, v in cors_headers(origin).items():
+        resp.headers[k] = v
+    return resp
+
+
+@app.route("/logo-resolve", methods=["POST"])
+def logo_resolve():
+    """Take a logo URL and return base64 data URL embeddable directly in HTML."""
+    origin = request.headers.get("Origin", "")
+    if request.headers.get("X-NBP-Key") != TOOL_SECRET:
+        return reply({"error": "Unauthorized"}, 401)
+
+    body = request.get_json(silent=True) or {}
+    url = (body.get("url") or "").strip()
+    if not url or not (url.startswith("http://") or url.startswith("https://")):
+        return reply({"error": "Valid http(s) URL required"}, 400)
+
+    try:
+        with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+            r = client.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; NBP-Logo-Resolver/1.0)",
+                    "Accept": "image/png,image/jpeg,image/svg+xml,image/webp,image/gif,*/*",
+                },
+            )
+    except httpx.RequestError as e:
+        return reply({"error": f"Fetch failed: {e}"}, 502)
+
+    if r.status_code != 200:
+        return reply({"error": f"Logo URL returned {r.status_code}"}, 502)
+
+    content_type = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if content_type not in ALLOWED_IMAGE_MIMES:
+        # Some servers serve SVG as text/xml or similar — try to recover from URL extension
+        ext = url.lower().rsplit(".", 1)[-1] if "." in url else ""
+        guess = {
+            "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "gif": "image/gif", "svg": "image/svg+xml", "webp": "image/webp",
+        }.get(ext)
+        if guess:
+            content_type = guess
+        else:
+            return reply({"error": f"Unsupported content type: {content_type}"}, 415)
+
+    body_bytes = r.content
+    if len(body_bytes) == 0:
+        return reply({"error": "Empty response"}, 502)
+    if len(body_bytes) > MAX_LOGO_BYTES:
+        return reply({"error": f"Logo too large: {len(body_bytes)} bytes (max 2 MB)"}, 413)
+
+    encoded = base64.b64encode(body_bytes).decode("ascii")
+    data_url = f"data:{content_type};base64,{encoded}"
+
+    return reply({
+        "ok": True,
+        "dataUrl": data_url,
+        "contentType": content_type,
+        "bytes": len(body_bytes),
     })
 
 
