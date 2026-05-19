@@ -50,9 +50,10 @@ REQUIRED SEARCHES — perform these in order:
 
 2. Brand colors: search for the school's STATED colors in text. Try queries like "[School Name] school colors", "[School Name] colors mascot", "[School Name] About". Schools usually state their colors in their About page, history page, handbook, or Wikipedia entry (e.g. "Our school colors are navy and gold"). Also check the school's main website (.org, .k12, .net, .edu) for any text that names the colors. Convert color names into hex codes (e.g. "navy" → "#1E3A8A", "gold" → "#D4A54C", "kelly green" → "#4CBB17", "maroon" → "#800000", "Carolina blue" → "#7BAFD4"). Return the hex codes you would use to represent those named colors faithfully. DO NOT use a school district's colors as a fallback for a specific school — find that specific school's own colors. If you genuinely cannot find the school's stated colors after multiple searches, return empty strings and colorsConfidence: "low".
 
-3. Staff contacts: search for "[School Name] principal" and "[School Name] staff directory" and "[School Name] contact" to find:
+3. Staff contacts: search for "[School Name] principal" and "[School Name] staff directory" and "[School Name] contact" and "[School Name] athletic director" to find:
    - Principal: name + email
    - Assistant Principal(s): name + email (if multiple, return the first)
+   - Athletic Director: name + email (if the school has an athletics program — common at middle schools and required at high schools)
    - Yearbook coordinator / advisor: name + email (often a teacher; sometimes called yearbook sponsor)
    - Secretary or front office / main office: name + email (may just be a generic info@ address)
    Many schools list staff emails on their site. If no specific email is published, leave the email empty — DO NOT invent or guess email addresses.
@@ -92,6 +93,7 @@ Return EXACTLY this JSON shape:
   "contacts": [
     {"role": "Principal",            "name": "...", "email": "..."},
     {"role": "Assistant Principal",  "name": "...", "email": "..."},
+    {"role": "Athletic Director",    "name": "...", "email": "..."},
     {"role": "Yearbook Coordinator", "name": "...", "email": "..."},
     {"role": "Secretary",            "name": "...", "email": "..."}
   ],
@@ -100,7 +102,7 @@ Return EXACTLY this JSON shape:
 
 Rules:
 - Return ONLY the JSON object, no commentary, no markdown fences
-- Always return all four contact roles in the contacts array; use empty strings for fields you can't find
+- Always return all five contact roles in the contacts array; use empty strings for fields you can't find
 - NEVER invent or guess emails — if you can't find a real published email, leave it empty
 - Colors must be valid 6-digit hex (#RRGGBB)
 - Prefer darker/more saturated as primaryColor, lighter/brighter as accentColor
